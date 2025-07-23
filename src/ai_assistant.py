@@ -5,32 +5,63 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from pinecone import Pinecone
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from openai import OpenAI
 
 load_dotenv()
 
 class AIAssistant:
     def __init__(self, operators_path):
-        # Pinecone Configuration
+        print("--- Initializing AIAssistant ---")
+        # API Keys and Configuration
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
         self.pinecone_index_name = os.getenv("PINECONE_INDEX_NAME")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
 
-        if not self.pinecone_api_key or not self.pinecone_index_name or not self.google_api_key:
-            raise ValueError("Please set PINECONE_API_KEY, PINECONE_INDEX_NAME, and GOOGLE_API_KEY in your .env file")
+        if not all([self.pinecone_api_key, self.pinecone_index_name, self.google_api_key, self.openai_api_key]):
+            raise ValueError("Please set PINECONE_API_KEY, PINECONE_INDEX_NAME, GOOGLE_API_KEY, and OPENAI_API_KEY in your .env file")
 
         # Initialize Pinecone
-        self.pc = Pinecone(api_key=self.pinecone_api_key)
-        self.index = self.pc.Index(self.pinecone_index_name)
+        try:
+            print("--- Initializing Pinecone ---")
+            self.pc = Pinecone(api_key=self.pinecone_api_key)
+            self.index = self.pc.Index(self.pinecone_index_name)
+            print("--- Pinecone initialized successfully ---")
+        except Exception as e:
+            print(f"--- Error initializing Pinecone: {e} ---")
+            raise
 
-        # Initialize Embedding Model
-        self.embeddings_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=self.google_api_key)
+        # Initialize Embedding Model (used for Pinecone RAG)
+        try:
+            print("--- Initializing Embedding Model ---")
+            self.embeddings_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=self.google_api_key)
+            print("--- Embedding Model initialized successfully ---")
+        except Exception as e:
+            print(f"--- Error initializing Embedding Model: {e} ---")
+            raise
 
-        # Initialize Generative Model
-        genai.configure(api_key=self.google_api_key)
-        self.model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
+        # Initialize Generative Models
+        try:
+            print("--- Initializing Generative Models ---")
+            genai.configure(api_key=self.google_api_key)
+            self.gemini_model = genai.GenerativeModel('models/gemini-1.5-pro-latest')
+            self.openai_client = OpenAI(api_key=self.openai_api_key)
+            self.gpt_model_name = "gpt-4o"
+            print("--- Generative Models initialized successfully ---")
+        except Exception as e:
+            print(f"--- Error initializing Generative Models: {e} ---")
+            raise
 
         # Load all operator names (for the AI's general knowledge, not for RAG context)
-        self.operators = self.load_operators_from_md_files(operators_path)
+        try:
+            print(f"--- Loading operators from {operators_path} ---")
+            self.operators = self.load_operators_from_md_files(operators_path)
+            print(f"--- Loaded {len(self.operators)} operators ---")
+        except Exception as e:
+            print(f"--- Error loading operators: {e} ---")
+            raise
+        
+        print("--- AIAssistant initialization complete ---")
 
     def load_operators_from_md_files(self, operators_path):
         operators = []
@@ -45,14 +76,21 @@ class AIAssistant:
         
         return operators
 
-    def generate_logic(self, prompt, history=None):
+    def generate_logic(self, prompt, history=None, model_choice="gemini"):
         # 1. Embed the user's prompt
         query_vector = self.embeddings_model.embed_query(prompt)
 
         # 2. Query Pinecone for relevant operator documentation (RAG)
         results = self.index.query(vector=query_vector, top_k=5, include_metadata=True)
         retrieved_docs = [match.metadata['text'] for match in results.matches]
-        context_operators = "\n\nRelevant Operator Documentation:\n" + "\n---\n".join(retrieved_docs)
+        
+        context_parts = ["""
+
+Relevant Operator Documentation:
+"""]
+        context_parts.extend([f"""---
+{doc}""" for doc in retrieved_docs])
+        context_operators = "".join(context_parts)
 
         system_prompt = f"""AI Agent Instructions – Assistant for Business Rule Operators
  Purpose
@@ -211,11 +249,38 @@ Your output should ONLY be the generated formula string, and nothing else. Do NO
         chat_history_for_model = []
         if history:
             for msg in history:
-                chat_history_for_model.append(msg)
+                # Assuming msg is a dictionary with 'role' and 'parts' (or 'content')
+                # Adjust keys based on how you structure your history messages
+                if 'role' in msg and ('parts' in msg or 'content' in msg):
+                     chat_history_for_model.append(msg)
+                elif 'prompt' in msg and 'response' in msg: # Handle your ChatMessage object structure
+                     chat_history_for_model.append({'role': 'user', 'parts': [msg['prompt']]})
+                     chat_history_for_model.append({'role': 'model', 'parts': [msg['response']]})
+
 
         # Generate content using the model
-        response = self.model.generate_content(
-            contents=[*chat_history_for_model, {'role': 'user', 'parts': [f"{system_prompt}\n\nUser Prompt: {prompt}"]}]
-        )
+        if model_choice == "gemini":
+            response = self.gemini_model.generate_content(
+                contents=[*chat_history_for_model, {'role': 'user', 'parts': [system_prompt, "\n\nUser Prompt: ", prompt]}]
+            )
+            return {"logic": response.text.strip(), "model_used": "Gemini"}
+        elif model_choice == "gpt-4o":
+            messages = []
+            messages.append({"role": "system", "content": system_prompt})
+            for msg in chat_history_for_model:
+                # Assuming msg is a dictionary with 'role' and 'content' for OpenAI
+                # Adjust keys based on how you structure your history messages
+                if 'role' in msg and 'content' in msg:
+                     messages.append(msg)
+                elif 'prompt' in msg and 'response' in msg: # Handle your ChatMessage object structure
+                     messages.append({"role": "user", "content": msg['prompt']})
+                     messages.append({"role": "assistant", "content": msg['response']})
 
-        return {"logic": response.text.strip()}
+
+            chat_completion = self.openai_client.chat.completions.create(
+                model=self.gpt_model_name,
+                messages=messages
+            )
+            return {"logic": chat_completion.choices[0].message.content.strip(), "model_used": "GPT-4o"}
+        else:
+            raise ValueError("Invalid model choice.")

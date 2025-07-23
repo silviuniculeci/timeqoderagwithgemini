@@ -4,6 +4,8 @@ import uuid
 
 from flask import Flask, send_file, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+
+# Import the AI Assistant (assuming it's still needed)
 from src.ai_assistant import AIAssistant
 
 app = Flask(__name__)
@@ -32,6 +34,7 @@ class ChatMessage(db.Model):
     session_id = db.Column(db.String(36), db.ForeignKey('chat_session.id'), nullable=False)
     prompt = db.Column(db.Text, nullable=False)
     response = db.Column(db.Text, nullable=False)
+    model_used = db.Column(db.String(50)) # Add new column for model used
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
     session = db.relationship('ChatSession', backref=db.backref('messages', lazy=True))
@@ -42,9 +45,11 @@ class ChatMessage(db.Model):
             'session_id': self.session_id,
             'prompt': self.prompt,
             'response': self.response,
+            'model_used': self.model_used, # Include model_used in dictionary
             'timestamp': self.timestamp.isoformat()
         }
 
+# Initialize AI Assistant
 ai_assistant = AIAssistant(operators_path='knowledge_base')
 
 @app.route("/")
@@ -65,6 +70,7 @@ def generate_logic():
         data = request.json
         prompt = data.get('prompt')
         session_id = data.get('session_id')
+        model_choice = data.get('model', 'gemini') # Get model choice, default to gemini
 
         if not prompt:
             return jsonify({"error": "Prompt is required"}), 400
@@ -75,16 +81,17 @@ def generate_logic():
         chat_messages = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.timestamp.asc()).all()
         history = []
         for msg in chat_messages:
+            # Include model_used in history for context if needed by the AI
             history.append({"role": "user", "parts": [msg.prompt]})
             history.append({"role": "model", "parts": [msg.response]})
 
-        generated_logic = ai_assistant.generate_logic(prompt, history)
+        generated_data = ai_assistant.generate_logic(prompt, history, model_choice)
         
-        # Save chat to database
-        new_message = ChatMessage(session_id=session_id, prompt=prompt, response=generated_logic['logic'])
+        # Save chat to database, including model_used
+        new_message = ChatMessage(session_id=session_id, prompt=prompt, response=generated_data['logic'], model_used=generated_data['model_used'])
         db.session.add(new_message)
         db.session.commit()
-        print(f"--- Saved message to session {session_id}: Prompt='{prompt}', Response='{generated_logic['logic']}' ---")
+        print(f"--- Saved message to session {session_id}: Prompt='{prompt}', Response='{generated_data['logic']}', Model Used='{generated_data['model_used']}' ---")
 
         # Update session title with first message if it's a new session
         session = ChatSession.query.get(session_id)
@@ -93,7 +100,7 @@ def generate_logic():
             db.session.commit()
             print(f"--- Updated session {session_id} title to: {session.title} ---")
 
-        return jsonify(generated_logic)
+        return jsonify(generated_data)
     except Exception as e:
         print(f"An error occurred: {e}")
         return jsonify({"error": str(e)}), 500
@@ -112,11 +119,11 @@ def chat_sessions():
     print(f"--- Retrieved {len(sessions)} chat sessions ---")
     return jsonify([s.to_dict() for s in sessions])
 
-# This function will be called once when the application starts
-# It ensures the database tables are created before any requests are handled.
+# Database initialization (re-added local file deletion)
 with app.app_context():
-    if os.path.exists('chat_history.db'):
-        os.remove('chat_history.db')
+    db_path = app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
+    if os.path.exists(db_path):
+        os.remove(db_path)
         print("Removed existing chat_history.db for a clean start.")
     db.create_all()
     print("Database tables created.")
