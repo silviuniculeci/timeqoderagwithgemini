@@ -9,4 +9,5 @@ python-dotenv
 langchain-google-genai
 pinecone
 Flask-SQLAlchemy
-gunicornopenai
+gunicorn
+openai
