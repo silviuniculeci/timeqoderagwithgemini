@@ -3,8 +3,8 @@ pip
 autopep8
 
 # App
-flaskgoogle-generativeai
-python-dotenv
+flask
+google-generativeai
 python-dotenv
 langchain-google-genai
 pinecone
