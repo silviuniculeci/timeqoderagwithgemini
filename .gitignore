@@ -1,1 +1,8 @@
 .venv
+.env
+__pycache__/
+instance/
+src/__pycache__/
+src/operators.json
+chat_history.db
+mem0_chroma_db/

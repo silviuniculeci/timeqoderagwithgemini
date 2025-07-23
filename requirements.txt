@@ -3,4 +3,12 @@ pip
 autopep8
 
 # App
-flask
+flaskgoogle-generativeai
+python-dotenv
+python-dotenv
+langchain-google-genai
+pinecone
+Flask-SQLAlchemy
+gunicorn
+mem0ai
+chromadb

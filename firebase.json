@@ -1,0 +1,41 @@
+1 {
+    2   "hosting": {
+    3     "public": "public", // This directory will contain your index.html and 
+      other static assets
+    4     "ignore": [
+    5       "firebase.json",
+    6       "**/.*",
+    7       "**/node_modules/**",
+    8       "**/__pycache__/**",
+    9       "**/.venv/**",
+   10       "**/*.py",
+   11       "**/*.md",
+   12       "**/.env",
+   13       "**/chat_history.db",
+   14       "**/index_operators.py"
+   15     ],
+   16     "rewrites": [
+   17       {
+   18         "source": "/generate-logic",
+   19         "run": {
+   20           "serviceId": "ai-logic-assistant", // <--- CHOOSE A UNIQUE NAME FOR
+      YOUR CLOUD RUN SERVICE
+   21           "region": "us-central1" // <--- CHOOSE A GOOGLE CLOUD REGION (e.g.,
+      us-central1, europe-west1)
+   22         }
+   23       },
+   24       {
+   25         "source": "/chat-history",
+   26         "run": {
+   27           "serviceId": "ai-logic-assistant", // <--- SAME SERVICE ID AS ABOVE
+   28           "region": "us-central1" // <--- SAME REGION AS ABOVE
+   29         }
+   30       },
+   31       {
+   32         "source": "**",
+   33         "destination": "/index.html" // Serve index.html for all other routes
+      (for SPA)
+   34       }
+   35     ]
+   36   }
+   37 }
